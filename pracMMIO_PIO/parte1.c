@@ -9,15 +9,18 @@
 #include <stdint.h>
 #include "bits.h"
 
-#define LOCAL_APIC_BASE_ADDRESS 0xfee00000
-
+// registros Generic Host Control
 struct ahci_info
 {
-	uint32_t reservado[8];
-	uint32_t ID;
-	uint32_t relleno[3];
-	uint32_t version; // nº versión: 8 bits de menor peso
-					  // ... no usados por el programa
+	uint32_t hostCapabilites;
+	uint32_t globalHostControl;
+	uint32_t interruptStatus;
+	uint32_t portsImplemented;
+	uint32_t version;
+	uint32_t commandCompletionCoalescing[2];
+	uint32_t enclosureManagement[2];
+	uint32_t hostCapabilitesExtended;
+	uint32_t biosHandoff;
 };
 
 int main(int argc, char *argv[])
@@ -27,6 +30,11 @@ int main(int argc, char *argv[])
 
 	struct ahci_info volatile *ahci; // volatile elimina optimizaciones de compilador
 
+	if (argc != 2) {
+		printf("ERROR: Indica como parámetro la dirección física inicial en hexadecimal.\n");
+		return 1;
+	}
+
 	if ((fd = open("/dev/mem", O_RDONLY | __O_DSYNC)) < 0)
 	{ // O_DSYNC: accesos no usan cache
 		perror("open");
@@ -35,17 +43,17 @@ int main(int argc, char *argv[])
 
 	// Obtenemos direccion fisica inicial en hexadecimal
 	dir = strtoul(argv[1], NULL, 16);
-	printf("Acceso a dirección física: %lu\n", dir);
 
 	// obtiene rango dir. lógicas usuario asociadas a dir. físicas dispositivo
-	if ((ahci = mmap(NULL, tam, PROT_READ, MAP_SHARED, fd, LOCAL_APIC_BASE_ADDRESS)) == MAP_FAILED)
+	if ((ahci = mmap(NULL, tam, PROT_READ, MAP_SHARED, fd, dir)) == MAP_FAILED)
 	{
 		perror("mmap");
 		return 1;
 	}
 
-	printf("Acceso dir física %x usando %p\n", dir, ahci);
-	printf("Local APIC ID: %d Versión %d\n", ahci->ID, bits_extrae(ahci->version, 0, 8));
+	printf("Versión %x.%x\n", bits_extrae(ahci->version, 16, 8), bits_extrae(ahci->version, 8, 8));
+	printf("Versión %x\n", ahci->version);
+
 	close(fd);
 	munmap((void *)ahci, tam);
 	return 0;
