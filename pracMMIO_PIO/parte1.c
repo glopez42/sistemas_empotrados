@@ -30,12 +30,13 @@ int main(int argc, char *argv[])
 
 	struct ahci_info volatile *ahci; // volatile elimina optimizaciones de compilador
 
-	if (argc != 2) {
+	if (argc != 2)
+	{
 		printf("ERROR: Indica como parámetro la dirección física inicial en hexadecimal.\n");
 		return 1;
 	}
 
-	if ((fd = open("/dev/mem", O_RDONLY | __O_DSYNC)) < 0)
+	if ((fd = open("/dev/mem", O_RDONLY | O_DSYNC)) < 0)
 	{ // O_DSYNC: accesos no usan cache
 		perror("open");
 		return 1;
@@ -52,7 +53,6 @@ int main(int argc, char *argv[])
 	}
 
 	printf("Versión %x.%x\n", bits_extrae(ahci->version, 16, 8), bits_extrae(ahci->version, 8, 8));
-	printf("Versión %x\n", ahci->version);
 
 	close(fd);
 	munmap((void *)ahci, tam);
