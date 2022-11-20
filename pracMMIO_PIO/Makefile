@@ -11,3 +11,6 @@ clean:
 
 p1:
 	gcc -o parte1 parte1.c bits.h
+
+p2:
+	gcc -o parte2 parte2.c bits.h
