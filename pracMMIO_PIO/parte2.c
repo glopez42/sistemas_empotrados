@@ -57,9 +57,18 @@ uint32_t print_specs(uint8_t bus, uint8_t slot, uint8_t function)
 
 int main(int argc, char *argv[])
 {
-	uint8_t class, subclass, interface,
-		actual_class, actual_subclass, actual_interface, header_type;
-	uint32_t data, bus, slot, function;
+	uint8_t i, class, subclass, interface, actual_class, actual_subclass, actual_interface, header_type;
+	uint32_t data, bus, slot, function, secondary_bus;
+
+	// variable para comprobar por cada bus si se ha detectado el bridge que le da paso
+	uint8_t has_PCI_bridge[256];
+	// el bus 0 se recorre directamente
+	has_PCI_bridge[0] = 1;
+	// el resto se marcan como no detectado
+	for (i = 1; i < 255; i++)
+	{
+		has_PCI_bridge[i] = 0;
+	}
 
 	if (argc != 4)
 	{
@@ -77,11 +86,13 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	// data = read_pci_word(bus, slot, function, 0xC);
-	// header_type = (data >> 16) & 0xFF;
-
 	for (bus = 0; bus < 256; bus++)
 	{
+		// si no se ha detectado el PCI-PCI bridge que lleva a ese bus pasa al siguiente
+		if (has_PCI_bridge[bus] == 0) {
+			continue;
+		}
+
 		for (slot = 0; slot < 32; slot++)
 		{
 			for (function = 0; function < 8; function++)
@@ -96,10 +107,20 @@ int main(int argc, char *argv[])
 					print_specs(bus, slot, function);
 				}
 
-				// comprobamos si es multifunción
 				data = read_pci_word(bus, slot, function, 0xC);
 				header_type = (data >> 16) & 0xFF;
-				// para ello miramos si el bit 7 tiene el valor a 1
+
+				// vemos si es un PCI-PCI bridge
+				if (header_type == 0x1)
+				{
+					// si es así vemos a qué bus nos lleva
+					data = read_pci_word(bus, slot, function, 0x18);
+					secondary_bus = (data >> 8) & 0xFF;
+					// marcamos que se ha detectado el PCI-PCI bridge hacia ese bus
+					has_PCI_bridge[secondary_bus] = 1;
+				}
+
+				// comprobamos si es multifunción para ello miramos si el bit 7 tiene el valor a 1
 				if (!(header_type & (1 << 7)))
 				{
 					// si no lo tiene a 1 entonces no hay más funciones
