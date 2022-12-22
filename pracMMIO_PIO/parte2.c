@@ -95,6 +95,16 @@ int main(int argc, char *argv[])
 				{
 					print_specs(bus, slot, function);
 				}
+
+				// comprobamos si es multifunción
+				data = read_pci_word(bus, slot, function, 0xC);
+				header_type = (data >> 16) & 0xFF;
+				// para ello miramos si el bit 7 tiene el valor a 1
+				if (!(header_type & (1 << 7)))
+				{
+					// si no lo tiene a 1 entonces no hay más funciones
+					break;
+				}
 			}
 		}
 	}
