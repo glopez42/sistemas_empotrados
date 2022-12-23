@@ -10,6 +10,7 @@
 #include <linux/ioctl.h>
 #include <asm/uaccess.h>
 
+
 MODULE_LICENSE("GPL");
 
 extern void set_spkr_frequency(unsigned int frequency);

@@ -1,5 +1,9 @@
-.vscode
 parte1
 *.o
 *.k
 parte2
+*.cmd
+*.ko
+*.mod
+*.symvers
+*.order
