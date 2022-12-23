@@ -1,2 +1,4 @@
 .vscode
 parte1
+*.o
+*.k
