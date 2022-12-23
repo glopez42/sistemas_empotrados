@@ -16,20 +16,62 @@
 #define BASE_ADDRESS 0x80000000
 // dirección base con el bit enable activado
 
-uint32_t read_pci_word(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset){
+uint32_t read_pci_word(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset)
+{
 	uint32_t address = BASE_ADDRESS | (bus << 16) | (slot << 11) | (function << 8) | (offset & 0xFC);
-	printf("%x\n", address);
 	outl(address, CONFIG_DIR);
 	return inl(CONFIG_DAT);
 }
 
+uint32_t print_specs(uint8_t bus, uint8_t slot, uint8_t function)
+{
+	uint32_t data, class, subclass, interface;
+
+	printf("Bus: 0x%x Slot: 0x%x Func: 0x%x ", bus, slot, function);
+
+	data = read_pci_word(bus, slot, function, 0);
+	printf("Vendedor: %#x ", data & 0xFFFF);
+	printf("Producto: %#x ", (data >> 16) & 0xFFFF);
+
+	data = read_pci_word(bus, slot, function, 8);
+	class = (data >> 24) & 0xFF; // byte más significativo
+	subclass = (data >> 16) & 0xFF;
+	interface = (data >> 8) & 0xFF;
+	printf("Clase: 0x%x Subclase: 0x%x Interface: 0x%x ", class, subclass, interface);
+
+	data = read_pci_word(bus, slot, function, 0x10);
+	printf("BAR0: %#x ", data);
+	data = read_pci_word(bus, slot, function, 0x14);
+	printf("BAR1: %#x ", data);
+	data = read_pci_word(bus, slot, function, 0x18);
+	printf("BAR2: %#x ", data);
+	data = read_pci_word(bus, slot, function, 0x1c);
+	printf("BAR3: %#x ", data);
+	data = read_pci_word(bus, slot, function, 0x20);
+	printf("BAR4: %#x ", data);
+	data = read_pci_word(bus, slot, function, 0x24);
+	printf("BAR5: %#x ", data);
+
+	printf("\n");
+}
+
 int main(int argc, char *argv[])
 {
-	uint8_t bus, slot, function, class, subclass, interface,
-	 actual_class, actual_subclass, actual_interface, header_type;
-	uint32_t data;
+	uint8_t i, class, subclass, interface, actual_class, actual_subclass, actual_interface, header_type;
+	uint32_t data, bus, slot, function, secondary_bus;
 
-	if (argc != 4) {
+	// variable para comprobar por cada bus si se ha detectado el bridge que le da paso
+	uint8_t has_PCI_bridge[256];
+	// el bus 0 se recorre directamente
+	has_PCI_bridge[0] = 1;
+	// el resto se marcan como no detectado
+	for (i = 1; i < 255; i++)
+	{
+		has_PCI_bridge[i] = 0;
+	}
+
+	if (argc != 4)
+	{
 		printf("Uso: parte2 clase subclase interfaz\n");
 		return 1;
 	}
@@ -44,55 +86,49 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	// uint32_t dir, dat;
-	// int vend, prod;
-
-	// // al ser bus 0, slot 0, función 0 y registro 0 basta con especificar el "enable" bit
-	// dir = (uint32_t)0x80000000;
-
-	// outl(dir, CONFIG_DIR);
-	// dat = inl(CONFIG_DAT);
-
-	// if (dat == 0xFFFFFFFF)
-	// {
-	// 	fprintf(stderr, "no existe ese dispositivo\n");
-	// 	return 1;
-	// }
-
-	// vend = dat & 0x0000FFFF;
-	// prod = dat >> 16; // extrae vendedor y producto
-
-	// printf("Bus 0 Slot 0 Función 0: ID Vendedor %x ID Producto %x\n", vend, prod);
-
-	for ( bus = 0; bus < 256; bus++)
+	for (bus = 0; bus < 256; bus++)
 	{
+		// si no se ha detectado el PCI-PCI bridge que lleva a ese bus pasa al siguiente
+		if (has_PCI_bridge[bus] == 0) {
+			continue;
+		}
+
 		for (slot = 0; slot < 32; slot++)
 		{
 			for (function = 0; function < 8; function++)
 			{
 				// leemos del pci para ver si coincide con la clase, subclase e interfaz seleccionada
-				data = read_pci_word(bus, slot, function, 0);
-				printf("vendor_id: %x\n", data & 0xFFFF);
 				data = read_pci_word(bus, slot, function, 8);
-				printf("%x\n", data);
 				actual_class = (data >> 24) & 0xFF; // byte más significativo
 				actual_subclass = (data >> 16) & 0xFF;
 				actual_interface = (data >> 8) & 0xFF;
-				data = read_pci_word(bus, slot, function, 0xC);
-				printf("%x\n", data);
-				header_type = (data >> 16) & 0xFF;
-				printf("b %x\n", header_type);
-				if (actual_class == class && actual_subclass == subclass && actual_interface == interface){
-					printf("%d %d %d\n", actual_class, actual_subclass, actual_interface);
-					return 0;
+				if (actual_class == class && actual_subclass == subclass && actual_interface == interface)
+				{
+					print_specs(bus, slot, function);
 				}
-				printf("%x %x %x\n", actual_class, actual_subclass, actual_interface);
-				printf("%x %x %x\n", class, subclass, interface);
 
+				data = read_pci_word(bus, slot, function, 0xC);
+				header_type = (data >> 16) & 0xFF;
+
+				// vemos si es un PCI-PCI bridge
+				if (header_type == 0x1)
+				{
+					// si es así vemos a qué bus nos lleva
+					data = read_pci_word(bus, slot, function, 0x18);
+					secondary_bus = (data >> 8) & 0xFF;
+					// marcamos que se ha detectado el PCI-PCI bridge hacia ese bus
+					has_PCI_bridge[secondary_bus] = 1;
+				}
+
+				// comprobamos si es multifunción para ello miramos si el bit 7 tiene el valor a 1
+				if (!(header_type & (1 << 7)))
+				{
+					// si no lo tiene a 1 entonces no hay más funciones
+					break;
+				}
 			}
-			return 0;
 		}
 	}
-	
+
 	return 0;
 }
