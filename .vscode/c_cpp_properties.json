@@ -19,12 +19,15 @@
                 "/usr/src/linux-headers-5.15.0-53-generic/include/uapi",
                 "/usr/src/linux-headers-5.15.0-53-generic/include/generated/uapi",
                 "/usr/src/linux-headers-5.15.0-53-generic/ubuntu/include",
-                "/usr/lib/gcc/x86_64-linux-gnu/9/include"
+                "/usr/lib/gcc/x86_64-linux-gnu/9/include",
+                "/usr/src/linux-headers-5.15.0-53-generic/arch/x86/include/generated/uapi/asm"
             ],
             "compilerArgs": [
                 "-nostdinc",
-                "-include", "/usr/src/linux-headers-5.15.0-53-generic/include/linux/kconfig.h",
-                "-include", "/usr/src/linux-headers-5.15.0-53-generic/include/linux/compiler_types.h"
+                "-include",
+                "/usr/src/linux-headers-5.15.0-53-generic/include/linux/kconfig.h",
+                "-include",
+                "/usr/src/linux-headers-5.15.0-53-generic/include/linux/compiler_types.h"
             ]
         }
     ],
