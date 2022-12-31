@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/i8253.h>
+#include <asm/io.h>
 
 void set_spkr_frequency(unsigned int frequency)
 {
@@ -28,7 +29,7 @@ void spkr_on(void)
 
 	// hay que poner un 1 en los bits de menor peso del registro 0x61 (reg OR 3)
 	outb(inb_p(0x61) | 3, 0x61); // se pone inb_p para no modificar el resto de bits del registro
-	
+
 	raw_spin_unlock_irqrestore(&i8253_lock, flags);
 
 	printk(KERN_INFO "spkr ON\n");

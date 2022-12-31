@@ -13,6 +13,7 @@
 #define DISP_NAME "int_spkr"
 
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Guillermo Lopez Garcia");
 
 extern void set_spkr_frequency(unsigned int frequency);
 extern void spkr_on(void);
@@ -20,8 +21,10 @@ extern void spkr_off(void);
 
 // variables de dispositivo
 static int minor = 0;
+static int major;
 static dev_t id_disp;
 static struct cdev disp;
+static struct class *class;
 
 module_param(minor, int, S_IRUGO);
 
@@ -38,22 +41,21 @@ static int spkr_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-static int spkr_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
+static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     printk(KERN_INFO "WRITE spkr\n");
     return count;
 }
 
-static struct file_operations spkr_fops = {
+static const struct file_operations spkr_fops = {
     .owner = THIS_MODULE,
     .open = spkr_open,
     .release = spkr_release,
     .write = spkr_write
 };
 
-
 // **** Rutina de inicialización del módulo ****
-static void init_spkr()
+static int init_spkr(void)
 {
 
     // Reserva de números major y minor
@@ -63,24 +65,43 @@ static void init_spkr()
         return -1;
     }
 
+    // Mostramos major seleccionado
+    major = MAJOR(id_disp);
+    printk(KERN_INFO "MAJOR: %d\n", major);
+    printk(KERN_INFO "MINOR: %d\n", minor);
+
     // Inicialización de parámetros de dispositivo y funciones
     cdev_init(&disp, &spkr_fops);
 
     // Asociar id dispositivo con struct de dispositivo
-    if (cdev_add(&disp, id_disp, 1))
+    if (cdev_add(&disp, id_disp, 1) == -1)
     {
+        cdev_del(&disp);
         printk(KERN_ERR "Error al añadir struct cdev.");
         return -1;
     }
+
+    // Alta de un dispositivo para las aplicaciones
+    class = class_create(THIS_MODULE, "speaker");
+    device_create(class, NULL, id_disp, NULL, DISP_NAME);
+
+    printk(KERN_INFO "Device created\n");
+
+    return 0;
 }
 
 // **** Rutina de terminación del módulo ****
-static void exit_spkr()
+static void exit_spkr(void)
 {
-    // Liberación de major y minor
-    unregister_chrdev_region(id_disp, 1);
     // Eliminación de dispositivo
     cdev_del(&disp);
+    // Dar de baja en sysfs
+    device_destroy(class, id_disp);
+    class_destroy(class);
+    // Liberación de major y minor
+    unregister_chrdev_region(id_disp, 1);
+
+    printk(KERN_INFO "Device destroyed\n");
 }
 
 module_init(init_spkr);
