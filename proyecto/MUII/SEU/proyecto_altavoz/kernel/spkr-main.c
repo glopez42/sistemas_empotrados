@@ -56,6 +56,14 @@ static int spkr_open(struct inode *inode, struct file *filp)
 
 static int spkr_release(struct inode *inode, struct file *filp)
 {
+    // si se cierra estando modo escritura
+    if (filp->f_mode & FMODE_WRITE)
+    {
+        mutex_lock(&open_mutex);
+        open_count -= 1;
+        mutex_unlock(&open_mutex);
+    }
+
     printk(KERN_INFO "RELEASE spkr\n");
     return 0;
 }
