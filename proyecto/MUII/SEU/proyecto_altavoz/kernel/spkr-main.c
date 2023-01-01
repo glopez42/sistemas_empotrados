@@ -8,6 +8,7 @@
 #include <linux/sched.h>
 #include <linux/kfifo.h>
 #include <linux/ioctl.h>
+#include <linux/mutex.h>
 #include <asm/uaccess.h>
 
 #define DISP_NAME "int_spkr"
@@ -26,11 +27,29 @@ static dev_t id_disp;
 static struct cdev disp;
 static struct class *class;
 
+// sincronización
+struct mutex open_mutex;
+static int open_count = 0;
+
 module_param(minor, int, S_IRUGO);
 
 // **** Operaciones de apertura, cierre y escritura ****
 static int spkr_open(struct inode *inode, struct file *filp)
 {
+
+    // si se abre en modo escritura
+    if (filp->f_mode & FMODE_WRITE)
+    {
+        mutex_lock(&open_mutex);
+        if (open_count > 0) {
+            printk(KERN_INFO "BUSY spkr\n");
+            mutex_unlock(&open_mutex);
+            return -EBUSY;
+        }
+        open_count += 1;
+        mutex_unlock(&open_mutex);
+    }
+
     printk(KERN_INFO "OPEN spkr\n");
     return 0;
 }
@@ -51,8 +70,7 @@ static const struct file_operations spkr_fops = {
     .owner = THIS_MODULE,
     .open = spkr_open,
     .release = spkr_release,
-    .write = spkr_write
-};
+    .write = spkr_write};
 
 // **** Rutina de inicialización del módulo ****
 static int init_spkr(void)
