@@ -20,7 +20,11 @@
                 "/usr/src/linux-headers-5.15.0-56-generic/include/generated/uapi",
                 "/usr/src/linux-headers-5.15.0-56-generic/ubuntu/include",
                 "/usr/lib/gcc/x86_64-linux-gnu/9/include",
-                "/usr/src/linux-headers-5.15.0-56-generic/arch/x86/include/generated/uapi/asm"
+                "/usr/src/linux-headers-5.15.0-56-generic/arch/x86/include/generated/uapi/asm",
+                "${workspaceFolder}",
+                "/usr/include",
+                "/usr/local/include",
+                "/usr/include/x86_64-linux-gnu"
             ],
             "compilerArgs": [
                 "-nostdinc",

@@ -25,7 +25,7 @@ struct ahci_info
 
 int main(int argc, char *argv[])
 {
-	int fd, tam = 4096;
+	int fd, tam = 4096, major, minor1, minor2;
 	unsigned long dir;
 
 	struct ahci_info volatile *ahci; // volatile elimina optimizaciones de compilador
@@ -52,7 +52,12 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	printf("Versión %x.%x\n", bits_extrae(ahci->version, 16, 8), bits_extrae(ahci->version, 8, 8));
+	major = bits_extrae(ahci->version, 16, 16);
+	minor1 = bits_extrae(ahci->version, 8, 8);
+	minor2 = bits_extrae(ahci->version, 0, 8);
+	printf("Versión %x.%x", major, minor1);
+	if (minor2 != 0) printf("%x", minor2);
+	printf("\n");
 
 	close(fd);
 	munmap((void *)ahci, tam);
