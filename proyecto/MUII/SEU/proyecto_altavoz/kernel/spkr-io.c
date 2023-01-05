@@ -40,8 +40,8 @@ void spkr_off(void)
 	unsigned long flags;
 	raw_spin_lock_irqsave(&i8253_lock, flags);
 
-	// hay que poner a 0 cualquiera de los dos bits inferiores del registro 0x61 (reg OR 2)
-	outb(inb_p(0x61) | 2, 0x61); // se pone inb_p para no modificar el resto de bits del registro
+	// hay que poner a 0 los dos bits inferiores del registro 0x61
+	outb(inb_p(0x61) & 0xFC, 0x61); // se pone inb_p para no modificar el resto de bits del registro
 
 	raw_spin_unlock_irqrestore(&i8253_lock, flags);
 

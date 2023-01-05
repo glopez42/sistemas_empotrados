@@ -40,8 +40,6 @@ wait_queue_head_t lista_bloq;
 // temporizador
 static struct timer_list timer;
 
-
-
 module_param(minor, int, S_IRUGO);
 
 // **** Rutina que se activa al finalizar el temporizador ****
@@ -51,7 +49,6 @@ void timer_function(struct timer_list *t)
     wake_up_interruptible(&lista_bloq);
     is_blocked = 1;
     spin_unlock_bh(&lock_timer_function);
-    printk("temporizador");
 }
 
 // **** Operaciones de apertura, cierre y escritura ****
@@ -96,23 +93,27 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
 
     printk(KERN_INFO "WRITE spkr\n");
 
-    if (mutex_lock_interruptible(&write_mutex)) return -ERESTARTSYS;
+    if (mutex_lock_interruptible(&write_mutex))
+        return -ERESTARTSYS;
 
     total = count;
     while (count >= 4)
     {
         // extraemos sonido y frecuencia
-        if (get_user(time, (u_int16_t __user *) buf) || get_user(frequency, (u_int16_t __user *) (buf + 2)))
+        if (get_user(time, (u_int16_t __user *)buf) || get_user(frequency, (u_int16_t __user *)(buf + 2)))
         {
             mutex_unlock(&write_mutex);
             return -EFAULT;
         }
 
-        printk(KERN_INFO "> freq: %d\n> time: %d\n", frequency, time);
+        printk(KERN_INFO "spkr set timer: %d\n", time);
 
         // programamos frecuencia en dispositivo
-        set_spkr_frequency(frequency);
-        spkr_on();
+        if (frequency != 0)
+        {
+            set_spkr_frequency(frequency);
+            spkr_on();
+        }
 
         // arrancamos temporizador
         timer_setup(&timer, timer_function, 0);
@@ -120,13 +121,14 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
 
         // bloqueamos proceso
         is_blocked = 0;
-        if (wait_event_interruptible(lista_bloq, is_blocked)) {
+        if (wait_event_interruptible(lista_bloq, is_blocked))
+        {
             mutex_unlock(&write_mutex);
             return -ERESTARTSYS;
         }
 
         spkr_off();
-       
+
         // actualizamos valores
         count -= 4; // bytes leídos
         buf += 4;   // puntero del buffer de usuario
@@ -195,6 +197,7 @@ static void exit_spkr(void)
     // Liberación de major y minor
     unregister_chrdev_region(id_disp, 1);
 
+    spkr_off();
     printk(KERN_INFO "Device destroyed\n");
 }
 
