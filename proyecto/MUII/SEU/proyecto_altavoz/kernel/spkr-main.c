@@ -40,6 +40,12 @@ wait_queue_head_t lista_bloq;
 // temporizador
 static struct timer_list timer;
 
+// sonidos incompletos
+static char incomplete_sound[4];
+static int incomplete_count = 0;
+static int write_incomplete = 0;
+static int bytes_read = 0;
+
 module_param(minor, int, S_IRUGO);
 
 // **** Rutina que se activa al finalizar el temporizador ****
@@ -94,16 +100,59 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
     printk(KERN_INFO "WRITE spkr\n");
 
     if (mutex_lock_interruptible(&write_mutex))
-        return -ERESTARTSYS;
-
-    total = count;
-    while (count >= 4)
     {
-        // extraemos sonido y frecuencia
-        if (get_user(time, (u_int16_t __user *)buf) || get_user(frequency, (u_int16_t __user *)(buf + 2)))
+        return -ERESTARTSYS;
+    }
+
+    // si es una escritura incompleta
+    if (count > 0 && count < 4)
+    {
+        // guardamos los bytes
+        if (copy_from_user(incomplete_sound + incomplete_count, buf, count))
         {
             mutex_unlock(&write_mutex);
             return -EFAULT;
+        }
+        // guardamos el número de bytes leídos
+        incomplete_count += count;
+
+        // si ya tenemos todos los bytes marcamos que hay 4 bytes que escribir
+        if (incomplete_count == 4)
+        {
+            bytes_read = count;
+            count = 4;
+            incomplete_count = 0;
+            write_incomplete = 1;
+        }
+        // si no, se devuelve que se han leído los bytes incompletos
+        else
+        {
+            mutex_unlock(&write_mutex);
+            return count;
+        }
+    }
+
+    total = (write_incomplete) ? bytes_read : count;
+    // si hay al menos 4 bytes que escribir
+    while (count >= 4)
+    {
+        // miramos si ha habido una escritura incompleta que hay que hacer
+        if (write_incomplete)
+        {
+            // si es así, leemos los datos guardados previamente
+            write_incomplete = 0;
+            time = *(u_int16_t *)incomplete_sound;
+            frequency = *(u_int16_t *)(incomplete_sound + 2);
+        }
+        // si no la hay, se lee del buffer de usuario
+        else
+        {
+            // extraemos sonido y frecuencia
+            if (get_user(time, (u_int16_t __user *)buf) || get_user(frequency, (u_int16_t __user *)(buf + 2)))
+            {
+                mutex_unlock(&write_mutex);
+                return -EFAULT;
+            }
         }
 
         printk(KERN_INFO "spkr set timer: %d\n", time);
