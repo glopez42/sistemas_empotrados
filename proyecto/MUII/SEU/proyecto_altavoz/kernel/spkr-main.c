@@ -42,7 +42,7 @@ wait_queue_head_t lista_bloq;
 static struct timer_list timer;
 
 // FIFO
-// static struct kfifo cola;
+static struct kfifo cola;
 
 // sonidos incompletos
 static char incomplete_sound[4];
@@ -53,7 +53,7 @@ static int bytes_read = 0;
 module_param(spkr_minor, int, S_IRUGO);
 module_param(buffersize, int, S_IRUGO);
 
-// **** Rutina que se activa al finalizar el temporizador ****
+// **** Rutina que se activa al finalizar el temporizador en una escritura SIN buffer ****
 void timer_function(struct timer_list *t)
 {
     spin_lock_bh(&lock_timer_function);
@@ -62,10 +62,53 @@ void timer_function(struct timer_list *t)
     spin_unlock_bh(&lock_timer_function);
 }
 
+// **** Rutina que se activa al finalizar el temporizador en una escritura CON buffer ****
+void timer_function_buf(struct timer_list *t)
+{
+    u_int16_t frequency, time;
+
+    spin_lock_bh(&lock_timer_function);
+
+    // apagamos el beeper si estaba sonando
+    spkr_off();
+
+    // si la cola está vacía se desbloquea proceso
+    if (kfifo_is_empty(&cola))
+    {
+        is_blocked = 1;
+        wake_up_interruptible(&lista_bloq);
+    }
+    else
+    {
+        // si no se sacan de la cola el tiempo y la frecuencia
+        if (kfifo_out(&cola, &time, sizeof(time)) == 0 || kfifo_out(&cola, &frequency, sizeof(frequency)) == 0)
+        {
+            printk(KERN_ERR "Error al sacar elementos de la kfifo.\n");
+            is_blocked = 1;
+            wake_up_interruptible(&lista_bloq);
+            spin_unlock_bh(&lock_timer_function);
+            return;
+        }
+
+        printk(KERN_INFO "spkr set timer: %d\n", time);
+        // programamos frecuencia en dispositivo
+        if (frequency != 0)
+        {
+            set_spkr_frequency(frequency);
+            spkr_on();
+        }
+
+        // arrancamos temporizador
+        timer_setup(&timer, timer_function_buf, 0);
+        mod_timer(&timer, jiffies + msecs_to_jiffies(time));
+    }
+
+    spin_unlock_bh(&lock_timer_function);
+}
+
 // **** Operaciones de apertura, cierre y escritura ****
 static int spkr_open(struct inode *inode, struct file *filp)
 {
-
     // si se abre en modo escritura
     if (filp->f_mode & FMODE_WRITE)
     {
@@ -100,7 +143,8 @@ static int spkr_release(struct inode *inode, struct file *filp)
 
 static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-    u_int16_t frequency, time, total;
+    u_int16_t frequency, time, total, data_to_copy;
+    unsigned int copied;
 
     printk(KERN_INFO "WRITE spkr\n");
 
@@ -133,36 +177,92 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
     // si hay al menos 4 bytes que escribir o una escritura anterior incompleta
     while (count >= 4 || write_incomplete)
     {
-        // miramos si ha habido una escritura incompleta que hay que hacer
-        if (write_incomplete)
-        {
-            // si es así, leemos los datos guardados previamente
-            write_incomplete = 0;
-            time = *(u_int16_t *)incomplete_sound;
-            frequency = *(u_int16_t *)(incomplete_sound + 2);
-        }
-        // si no la hay, se lee del buffer de usuario
-        else
-        {
-            // extraemos sonido y frecuencia
-            if (get_user(time, (u_int16_t __user *)(buf)) || get_user(frequency, (u_int16_t __user *)(buf + 2)))
-            {
-                mutex_unlock(&write_mutex);
-                return -EFAULT;
-            }
-            bytes_read = 4;
-        }
-
         // ESCRITURA CON BUFFER
         if (buffersize != 0)
         {
+            // se copian los bytes que quepan o los que queden
+            data_to_copy = (count > buffersize) ? buffersize : count;
+
+            // si ha habido anteriormente una escritura incompleta se programa ese sonido
+            if (write_incomplete)
+            {
+                // si es así, leemos los datos guardados previamente
+                write_incomplete = 0;
+                time = *(u_int16_t *)incomplete_sound;
+                frequency = *(u_int16_t *)(incomplete_sound + 2);
+
+                // copiamos el resto de los datos del buffer de usuario a la kfifo
+                buf += bytes_read;
+                if (count >= 4 && kfifo_from_user(&cola, buf, data_to_copy, &copied))
+                {
+                    mutex_unlock(&write_mutex);
+                    return -EFAULT;
+                }
+            }
+            // si no se copian los datos en la cola y se sacan los 4 primeros bytes
+            else
+            {
+                if (kfifo_from_user(&cola, buf, data_to_copy, &copied))
+                {
+                    mutex_unlock(&write_mutex);
+                    return -EFAULT;
+                }
+
+                if (kfifo_out(&cola, &time, sizeof(u_int16_t)) == 0 || kfifo_out(&cola, &frequency, sizeof(u_int16_t)) == 0)
+                {
+                    mutex_unlock(&write_mutex);
+                    return -1;
+                }
+            }
+
+            printk(KERN_INFO "spkr set timer: %d\n", time);
+            // programamos frecuencia en dispositivo
+            if (frequency != 0)
+            {
+                set_spkr_frequency(frequency);
+                spkr_on();
+            }
+
+            // arrancamos temporizador
+            timer_setup(&timer, timer_function_buf, 0);
+            mod_timer(&timer, jiffies + msecs_to_jiffies(time));
+
+            // bloqueamos proceso
+            is_blocked = 0;
+            if (wait_event_interruptible(lista_bloq, is_blocked))
+            {
+                mutex_unlock(&write_mutex);
+                return -ERESTARTSYS;
+            }
+
+            // actualizamos puntero a buffer y valor de bytes que quedan por leer
+            buf += data_to_copy;
+            count -= data_to_copy;
         }
         // ESCRITURA SIN BUFFER
         else
         {
-            printk(KERN_INFO "spkr set timer: %d\n", time);
-            printk(KERN_INFO "bytes: %d\n", bytes_read);
+            // miramos si ha habido una escritura incompleta que hay que hacer
+            if (write_incomplete)
+            {
+                // si es así, leemos los datos guardados previamente
+                write_incomplete = 0;
+                time = *(u_int16_t *)incomplete_sound;
+                frequency = *(u_int16_t *)(incomplete_sound + 2);
+            }
+            // si no la hay, se lee del buffer de usuario
+            else
+            {
+                // extraemos sonido y frecuencia
+                if (get_user(time, (u_int16_t __user *)(buf)) || get_user(frequency, (u_int16_t __user *)(buf + 2)))
+                {
+                    mutex_unlock(&write_mutex);
+                    return -EFAULT;
+                }
+                bytes_read = 4;
+            }
 
+            printk(KERN_INFO "spkr set timer: %d\n", time);
             // programamos frecuencia en dispositivo
             if (frequency != 0)
             {
@@ -182,8 +282,8 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
                 return -ERESTARTSYS;
             }
 
-            spkr_off(); 
-            
+            spkr_off();
+
             // actualizamos valores
             count -= bytes_read; // bytes leídos
             buf += bytes_read;   // puntero del buffer de usuario
@@ -237,6 +337,10 @@ static int init_spkr(void)
     printk(KERN_INFO "MAJOR: %d\n", spkr_major);
     printk(KERN_INFO "MINOR: %d\n", spkr_minor);
 
+    // tamaño del buffer
+    if (buffersize)
+        printk(KERN_INFO "buffer size: %d\n", buffersize);
+
     // Inicialización de parámetros de dispositivo y funciones
     cdev_init(&disp, &spkr_fops);
 
@@ -252,11 +356,12 @@ static int init_spkr(void)
     class = class_create(THIS_MODULE, "speaker");
     device_create(class, NULL, id_disp, NULL, DISP_NAME);
 
-    // // creamos cola FIFO si hay buffersize
-    // if (buffersize)
-    // {
-    //     kfifo_alloc(&cola, buffersize, GFP_KERNEL);
-    // }
+    // creamos cola FIFO si hay buffersize
+    if (buffersize && kfifo_alloc(&cola, buffersize, GFP_KERNEL))
+    {
+        printk(KERN_ERR "Error al reservar memoria para la kfifo.");
+        return -1;
+    }
 
     printk(KERN_INFO "Device created\n");
 
@@ -273,6 +378,9 @@ static void exit_spkr(void)
     class_destroy(class);
     // Liberación de major y minor
     unregister_chrdev_region(id_disp, 1);
+    // si había una kfifo libera su memoria
+    if (buffersize)
+        kfifo_free(&cola);
 
     spkr_off();
     printk(KERN_INFO "Device destroyed\n");
