@@ -15,12 +15,16 @@
 
 #define DISP_NAME "int_spkr"
 
+#define SPKR_SET_MUTE_STATE _IOW('9', 1, int)
+#define SPKR_GET_MUTE_STATE _IOR('9', 1, int)
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Guillermo Lopez Garcia");
 
 extern void set_spkr_frequency(unsigned int frequency);
 extern void spkr_on(void);
 extern void spkr_off(void);
+void programar_sonido(u_int16_t frequency, u_int16_t time);
 
 // variables de dispositivo
 static int spkr_minor = 0;
@@ -36,7 +40,9 @@ struct mutex write_mutex;
 static int open_count = 0;
 static int is_blocked;
 spinlock_t lock_timer_function;
+spinlock_t lock_is_mute_variable;
 wait_queue_head_t lista_bloq;
+static int spkr_is_not_muted = 1;
 
 // temporizador
 static struct timer_list timer;
@@ -57,8 +63,8 @@ module_param(buffersize, int, S_IRUGO);
 void timer_function(struct timer_list *t)
 {
     spin_lock_bh(&lock_timer_function);
-    wake_up_interruptible(&lista_bloq);
     is_blocked = 1;
+    wake_up_interruptible(&lista_bloq);
     spin_unlock_bh(&lock_timer_function);
 }
 
@@ -89,21 +95,31 @@ void timer_function_buf(struct timer_list *t)
             spin_unlock_bh(&lock_timer_function);
             return;
         }
-
-        printk(KERN_INFO "spkr set timer: %d\n", time);
-        // programamos frecuencia en dispositivo
-        if (frequency != 0)
-        {
-            set_spkr_frequency(frequency);
-            spkr_on();
-        }
-
-        // arrancamos temporizador
-        timer_setup(&timer, timer_function_buf, 0);
-        mod_timer(&timer, jiffies + msecs_to_jiffies(time));
+        programar_sonido(frequency, time);
     }
-
     spin_unlock_bh(&lock_timer_function);
+}
+
+// **** Rutina para programar un sonido en el altavoz ****
+void programar_sonido(u_int16_t frequency, u_int16_t time)
+{
+    printk(KERN_INFO "spkr set timer: %d\n", time);
+    // programamos frecuencia en dispositivo si el spkr no está muteado
+    spin_lock_bh(&lock_is_mute_variable);
+    if (frequency != 0 && spkr_is_not_muted)
+    {
+        set_spkr_frequency(frequency);
+        spkr_on();
+    }
+    spin_unlock_bh(&lock_is_mute_variable);
+
+    // arrancamos temporizador dependiendo de si hay buffer de escritura o no
+    if (buffersize)
+        timer_setup(&timer, timer_function_buf, 0);
+    else
+        timer_setup(&timer, timer_function, 0);
+
+    mod_timer(&timer, jiffies + msecs_to_jiffies(time));
 }
 
 // **** Operaciones de apertura, cierre y escritura ****
@@ -215,17 +231,7 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
                 }
             }
 
-            printk(KERN_INFO "spkr set timer: %d\n", time);
-            // programamos frecuencia en dispositivo
-            if (frequency != 0)
-            {
-                set_spkr_frequency(frequency);
-                spkr_on();
-            }
-
-            // arrancamos temporizador
-            timer_setup(&timer, timer_function_buf, 0);
-            mod_timer(&timer, jiffies + msecs_to_jiffies(time));
+            programar_sonido(frequency, time);
 
             // bloqueamos proceso
             is_blocked = 0;
@@ -262,17 +268,7 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
                 bytes_read = 4;
             }
 
-            printk(KERN_INFO "spkr set timer: %d\n", time);
-            // programamos frecuencia en dispositivo
-            if (frequency != 0)
-            {
-                set_spkr_frequency(frequency);
-                spkr_on();
-            }
-
-            // arrancamos temporizador
-            timer_setup(&timer, timer_function, 0);
-            mod_timer(&timer, jiffies + msecs_to_jiffies(time));
+            programar_sonido(frequency, time);
 
             // bloqueamos proceso
             is_blocked = 0;
@@ -310,11 +306,46 @@ static ssize_t spkr_write(struct file *filp, const char __user *buf, size_t coun
     return total - count;
 }
 
+static long spkr_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+    int val = 0;
+
+    if (cmd == SPKR_SET_MUTE_STATE)
+    {
+        spin_lock_bh(&lock_is_mute_variable);
+
+        // obtenemos el valor del tercer parámetro
+        if (copy_from_user(&val, (int __user *)arg, sizeof(int)))
+            return -EFAULT;
+
+        // si val == 0 => is not muted, si arg == 1 => is muted
+        spkr_is_not_muted = 1 - val;
+        if (spkr_is_not_muted == 0)
+            spkr_off();
+
+        spin_unlock_bh(&lock_is_mute_variable);
+    }
+    else if (cmd == SPKR_GET_MUTE_STATE)
+    {
+        spin_lock_bh(&lock_is_mute_variable);
+        // si is_not_muted = 1 => val necesita ser 0
+        val = 1 - spkr_is_not_muted;
+
+        // devolvemos el valor del estado del altavoz
+        if (copy_to_user((int __user *)arg, &val, sizeof(int)))
+            return -EFAULT;
+
+        spin_unlock_bh(&lock_is_mute_variable);
+    }
+    return 0;
+}
+
 static const struct file_operations spkr_fops = {
     .owner = THIS_MODULE,
     .open = spkr_open,
     .release = spkr_release,
-    .write = spkr_write};
+    .write = spkr_write,
+    .unlocked_ioctl = spkr_ioctl};
 
 // **** Rutina de inicialización del módulo ****
 static int init_spkr(void)
@@ -324,6 +355,7 @@ static int init_spkr(void)
     mutex_init(&write_mutex);
     init_waitqueue_head(&lista_bloq);
     spin_lock_init(&lock_timer_function);
+    spin_lock_init(&lock_is_mute_variable);
 
     // Reserva de números major y minor
     if (alloc_chrdev_region(&id_disp, spkr_minor, 1, DISP_NAME))
@@ -339,7 +371,9 @@ static int init_spkr(void)
 
     // tamaño del buffer
     if (buffersize)
-        printk(KERN_INFO "buffer size: %d\n", buffersize);
+        printk(KERN_INFO "Modo escritura con buffer (%d bytes).\n", buffersize);
+    else
+        printk(KERN_INFO "Modo escritura sin buffer.");
 
     // Inicialización de parámetros de dispositivo y funciones
     cdev_init(&disp, &spkr_fops);
